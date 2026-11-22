@@ -101,6 +101,8 @@ test('a backup restores the log and check-ins after erasing everything', async (
   assert.equal(await page.locator('.ck-row').count(), 0);
 
   await page.locator('#restoreInput').setInputFiles(file);
+  // The file is read asynchronously, so wait for the restore sheet itself.
+  await page.locator('#sheetTitle', { hasText: 'Restore backup' }).waitFor();
   assert.match(await page.locator('#sheetBody').innerText(), /1 logged workout and 1 check-in/);
   await sheetButton(page, 'Restore');
   assert.equal(await page.locator('.sess').count(), 1);
