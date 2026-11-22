@@ -365,6 +365,20 @@ svg { display: block; }
 .empty h3 { font-family: var(--f-display); font-weight: 800; font-size: 22px; text-transform: uppercase; }
 .empty p { margin-top: 6px; color: var(--muted); font-size: 14.5px; line-height: 1.5; max-width: 60ch; }
 
+/* Body check-ins */
+.body-sec { margin-top: 14px; }
+.sec-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 2px; min-height: 40px; }
+.sec-head h3 { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.lifts-head { margin-top: 18px; }
+.lifts-head + .trends { margin-top: 4px; }
+.body-sec .trends { margin-top: 6px; }
+.ck-list { margin-top: 8px; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r); overflow: hidden; }
+.ck-row { width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: center; min-height: 44px; padding: 8px 14px; text-align: left; font-size: 14px; border-top: 1px solid var(--rule); }
+.ck-row:first-child { border-top: 0; }
+.ck-row span:last-child { font-family: var(--f-mono); font-size: 12.5px; color: var(--muted); text-align: right; }
+.ramp-prev { display: grid; gap: 6px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); }
+.ramp-prev:empty { display: none; }
+
 /* Settings */
 .group { margin-top: 16px; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r); overflow: hidden; }
 .group > h3 { padding: 12px 14px 2px; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
@@ -455,7 +469,7 @@ svg { display: block; }
 'use strict';
 
 /* ---------- Program ---------- */
-var APP_VERSION = '1.0';
+var APP_VERSION = '1.1';
 var DAYS = ['A', 'B', 'C'];
 var TABS = ['A', 'B', 'C', 'cardio'];
 var DAY_META = {
@@ -504,6 +518,9 @@ var TRENDS = [['a1', 'Squat'], ['b1', 'Deadlift'], ['a2', 'DB bench'], ['b2', 'O
 var CARDIO_MIN = 30;
 var BACKUP_EVERY = 14 * 864e5;
 var LS_KEY = 'recomp-training-log.v1';
+var RAMP_PCTS = [60, 70, 80];
+var RAMP_WEEKS = [2, 3, 4];
+var CHECKIN_EVERY = 7;
 
 var I = {
   check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.2 8.6l3 2.9 6.6-7"/></svg>',
@@ -535,7 +552,7 @@ function isStandalone() { return (window.matchMedia && window.matchMedia('(displ
 function isPhone() { var ua = navigator.userAgent || ''; return /iPhone|iPad|iPod|Android/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
 
 /* ---------- State ---------- */
-function defaultSettings() { return { autoRest: true, sound: true, vibrate: true, wake: false, deload: false, startDate: '', bar: 45, introSeen: false, lastBackup: 0 }; }
+function defaultSettings() { return { autoRest: true, sound: true, vibrate: true, wake: false, deload: false, startDate: '', bar: 45, introSeen: false, lastBackup: 0, ramp: null, rampOffered: false }; }
 function emptyLift() { return { startedAt: null, lastAt: null, sets: {}, warm: {} }; }
 function emptyCardio() { return { startedAt: null, lastAt: null, blocks: [false, false, false] }; }
 function emptyDays() { return { A: emptyLift(), B: emptyLift(), C: emptyLift(), cardio: emptyCardio() }; }
@@ -591,16 +608,24 @@ function normalizeState(s) {
   st.bar = Number(st.bar) > 0 && Number(st.bar) <= 100 ? Number(st.bar) : 45;
   st.lastBackup = Number(st.lastBackup) || 0;
   if (typeof st.startDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(st.startDate)) st.startDate = '';
-  ['autoRest', 'sound', 'vibrate', 'wake', 'deload', 'introSeen'].forEach(function (k) { st[k] = !!st[k]; });
+  ['autoRest', 'sound', 'vibrate', 'wake', 'deload', 'introSeen', 'rampOffered'].forEach(function (k) { st[k] = !!st[k]; });
+  st.ramp = normRamp(st.ramp);
   return out;
 }
+function normRamp(r) {
+  if (!isObj(r) || typeof r.start !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(r.start)) return null;
+  var t = {};
+  if (isObj(r.targets)) Object.keys(r.targets).forEach(function (k) { var v = numOrNull(r.targets[k]); if (v != null && v > 0) t[k] = v; });
+  return { start: r.start, weeks: RAMP_WEEKS.indexOf(Number(r.weeks)) >= 0 ? Number(r.weeks) : 3, pct: RAMP_PCTS.indexOf(Number(r.pct)) >= 0 ? Number(r.pct) : 70, targets: t };
+}
+function validMeasure(m) { return isObj(m) && typeof m.id === 'string' && typeof m.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(m.date) && (numOrNull(m.bw) != null || numOrNull(m.waist) != null); }
 function validSession(s) { return isObj(s) && typeof s.id === 'string' && (s.type === 'lift' || s.type === 'cardio') && typeof s.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s.date); }
 
 var storageOk = true;
 function loadLocal() { try { var raw = window.localStorage.getItem(LS_KEY); return raw ? JSON.parse(raw) : null; } catch (e) { storageOk = false; return null; } }
 function saveLocal() {
   try {
-    window.localStorage.setItem(LS_KEY, JSON.stringify({ S: S, sessions: sessions, U: { warmOpen: U.warmOpen, rest: U.rest, cardioT: U.cardioT, hideInstall: U.hideInstall } }));
+    window.localStorage.setItem(LS_KEY, JSON.stringify({ S: S, sessions: sessions, measures: measures, U: { warmOpen: U.warmOpen, rest: U.rest, cardioT: U.cardioT, hideInstall: U.hideInstall, ckSnooze: U.ckSnooze } }));
     storageOk = true;
   } catch (e) { storageOk = false; }
 }
@@ -608,6 +633,7 @@ function saveLocal() {
 var stored = loadLocal();
 var S = normalizeState(stored && stored.S);
 var sessions = stored && Array.isArray(stored.sessions) ? stored.sessions.filter(validSession) : [];
+var measures = stored && Array.isArray(stored.measures) ? stored.measures.filter(validMeasure) : [];
 var su = stored && isObj(stored.U) ? stored.U : {};
 var U = {
   view: 'workout',
@@ -616,6 +642,7 @@ var U = {
   rest: isObj(su.rest) && Number(su.rest.endsAt) ? su.rest : null,
   cardioT: isObj(su.cardioT) ? { running: !!su.cardioT.running, startMs: Number(su.cardioT.startMs) || 0, accMs: Number(su.cardioT.accMs) || 0 } : { running: false, startMs: 0, accMs: 0 },
   hideInstall: !!su.hideInstall,
+  ckSnooze: typeof su.ckSnooze === 'string' ? su.ckSnooze : '',
   openSess: null,
   confirmDel: null,
   wakeErr: false
@@ -709,6 +736,31 @@ function deloadDue() {
   var weeks = Math.floor(daysBetween(fromYmd(anchor), todayStart()) / 7);
   return weeks >= 8 ? { weeks: weeks, since: anchor === S.settings.startDate ? 'start' : 'deload' } : null;
 }
+/* Comeback ramp: every loaded lift starts at a share of its program weight and
+   climbs back to 100% in even weekly steps, e.g. 70%, 80%, 90%, then 100%. */
+function rampWeek() {
+  var r = S.settings.ramp; if (!r) return null;
+  var k = Math.floor(Math.max(0, daysBetween(fromYmd(r.start), todayStart())) / 7) + 1;
+  if (k > r.weeks + 1) return null;
+  return { k: k, weeks: r.weeks, done: k > r.weeks, pct: k > r.weeks ? 100 : Math.round(r.pct + (100 - r.pct) * (k - 1) / r.weeks) };
+}
+function rampActive() { var w = rampWeek(); return !!(w && !w.done); }
+function rampEnds() { var r = S.settings.ramp; if (!r) return null; var d = fromYmd(r.start); return ymd(new Date(d.getFullYear(), d.getMonth(), d.getDate() + r.weeks * 7)); }
+function rampRound(ex, w) {
+  var step = ex.kind === 'dumbbell' ? ex.inc : 5;
+  var x = Math.round(w / step) * step;
+  if (ex.kind === 'barbell') x = Math.max(Number(S.settings.bar) || 45, x);
+  return Math.max(step, Math.round(x * 10) / 10);
+}
+function rampWeightFor(ex, full, pct) { return pct >= 100 ? full : Math.min(full, rampRound(ex, full * pct / 100)); }
+function rampTarget(ex) {
+  if (!hasLoad(ex) || S.settings.deload) return null;
+  var r = S.settings.ramp, wk = rampWeek();
+  if (!r || !wk) return null;
+  var full = r.targets[ex.id];
+  if (!full) return null;
+  return { w: rampWeightFor(ex, full, wk.pct), full: full, wk: wk };
+}
 function nextUp() {
   var last = null;
   sessions.forEach(function (s) { if (s.type === 'lift' && DAYS.indexOf(s.day) >= 0 && (!last || (s.endedAt || 0) > (last.endedAt || 0))) last = s; });
@@ -733,7 +785,7 @@ function hasActivity(day) {
 }
 function inProgress() { return TABS.some(function (t) { return !!S.days[t].startedAt; }); }
 function cardioElapsed() { var t = U.cardioT; return t.accMs + (t.running ? Math.max(0, Date.now() - t.startMs) : 0); }
-function backupStale() { return sessions.length > 0 && (!S.settings.lastBackup || Date.now() - S.settings.lastBackup > BACKUP_EVERY); }
+function backupStale() { return (sessions.length > 0 || measures.length > 0) && (!S.settings.lastBackup || Date.now() - S.settings.lastBackup > BACKUP_EVERY); }
 
 /* ---------- Commit and render ---------- */
 function commit(noRender) {
@@ -840,6 +892,12 @@ function banners(day) {
   if (!isStandalone() && isPhone() && !U.hideInstall) {
     h += '<div class="banner"><p><b>Add this to your home screen.</b> In Safari, tap Share, then Add to Home Screen, and open it from the icon from now on. The home screen app keeps its own copy of your log, separate from Safari.</p><div class="banner-acts"><button type="button" class="ghost" data-act="hide-install">Not now</button></div></div>';
   }
+  if (day !== 'cardio' && !S.settings.ramp && !S.settings.rampOffered && !S.settings.deload) {
+    h += '<div class="banner"><p><b>Coming back after time off?</b> The comeback ramp starts every lift at 70% of its program weight and builds back to 100% over 3 weeks.</p><div class="banner-acts"><button type="button" data-act="ramp-open">Set it up</button><button type="button" class="ghost" data-act="ramp-dismiss">Not now</button></div></div>';
+  }
+  if (day !== 'cardio' && checkinDue()) {
+    h += '<div class="banner"><p><b>Weekly check-in.</b> Log your body weight and waist so you can see the recomp, not just the lifts.</p><div class="banner-acts"><button type="button" data-act="body-add">Log it</button><button type="button" class="ghost" data-act="ck-later">Later</button></div></div>';
+  }
   if (day !== 'cardio' && !S.settings.introSeen) {
     h += '<div class="banner"><p>Weights start at the starting numbers from your program. Change any that have moved and they carry forward from here. Have a backup from the Claude version? Restore it in Settings.</p><div class="banner-acts"><button type="button" data-act="intro-ok">Got it</button><button type="button" class="ghost" data-act="view" data-view="settings">Open Settings</button></div></div>';
   }
@@ -861,7 +919,9 @@ function banners(day) {
 }
 function dayView(day) {
   var p = progress(day), list = S.program[day], wk = weekNum(), phase;
+  var rw = rampWeek();
   if (S.settings.deload) phase = 'Deload: same weights, half the sets, stay well short of failure.';
+  else if (rw && !rw.done) phase = 'Comeback week ' + rw.k + ' of ' + rw.weeks + ': ' + rw.pct + '% of your program weights. Stop every set with about 3 reps left.';
   else if (wk && wk <= 2) phase = 'Weeks 1–2: stop every set with about 3 reps left.';
   else phase = 'Push the last set of each exercise to 1–2 reps from failure.';
   return weekStrip() + banners(day) +
@@ -900,6 +960,10 @@ function platesHtml(ex, w) {
     '<span class="pl-t">' + ps.map(fmtW).join(' + ') + ' a side' + (left > 0 ? ' (' + fmtW(left * 2) + ' short)' : '') + '</span>';
 }
 function cueHtml(day, ex) {
+  var rt = rampTarget(ex), cur = numOrNull(S.weights[ex.id]);
+  if (rt && (cur == null || cur < rt.w)) {
+    return '<div class="cue"><span>' + (rt.wk.done ? 'Comeback ramp done. Back to your ' + fmtW(rt.full) + ' lb program weight.' : 'Comeback week ' + rt.wk.k + ' of ' + rt.wk.weeks + ': ' + rt.wk.pct + '% of your ' + fmtW(rt.full) + ' lb program weight.') + '</span><button type="button" class="cue-btn" data-act="apply-ramp" data-day="' + day + '" data-ex="' + esc(ex.id) + '">Go to ' + fmtW(rt.w) + ' lb</button></div>';
+  }
   var c = progressCue(ex);
   if (!c) return '';
   if (c.kind === 'harder') return '<div class="cue"><span>Top of the range on every set last time. Make it a little harder today.</span></div>';
@@ -1016,9 +1080,39 @@ function sessItem(s) {
   var badge = lift ? '<span class="badge">' + esc(s.day) + '</span>' : '<span class="badge badge-c">' + I.incline + '</span>';
   return '<article class="sess' + (open ? ' is-open' : '') + '"><button type="button" class="sess-head" data-act="sess-toggle" data-id="' + esc(s.id) + '" aria-expanded="' + open + '">' + badge + '<span class="sess-t"><b>' + title + '</b><small>' + esc(meta) + '</small></span><span class="chev">' + I.chev + '</span></button>' + body + '</article>';
 }
+function bodySeries(key) {
+  return measures.filter(function (m) { return numOrNull(m[key]) != null; })
+    .sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); })
+    .map(function (m) { return { w: Number(m[key]), date: m.date }; });
+}
+function bodyTile(label, unit, key) {
+  var pts = bodySeries(key), cur = pts.length ? pts[pts.length - 1].w : null, sub, chart = '';
+  if (pts.length >= 2) {
+    var dlt = Math.round((pts[pts.length - 1].w - pts[0].w) * 10) / 10;
+    var good = key === 'waist' && dlt < 0;
+    sub = '<span class="trend-d' + (good ? ' up' : '') + '">' + (dlt > 0 ? '+' : '') + fmtW(dlt) + ' ' + unit + ' since ' + esc(fmtDay(pts[0].date)) + '</span>';
+    chart = spark(pts);
+  } else {
+    sub = '<span class="trend-d">' + (pts.length ? 'Logged once. Trend after 2.' : 'Not logged yet.') + '</span>';
+  }
+  return '<div class="trend"><span class="trend-k">' + esc(label) + '</span><span class="trend-v">' + (cur == null ? '–' : fmtW(cur)) + '<small>' + unit + '</small></span>' + sub + chart + '</div>';
+}
+function fmtCheckin(m) {
+  return [numOrNull(m.bw) != null ? fmtW(m.bw) + ' lb' : null, numOrNull(m.waist) != null ? fmtW(m.waist) + ' in waist' : null].filter(Boolean).join(' · ');
+}
+function bodyView() {
+  var recent = measures.slice().sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); }).slice(0, 4);
+  var rows = recent.map(function (m) {
+    return '<button type="button" class="ck-row" data-act="body-edit" data-id="' + esc(m.id) + '"><span>' + esc(fmtDay(m.date, true)) + '</span><span>' + esc(fmtCheckin(m)) + '</span></button>';
+  }).join('');
+  return '<section class="body-sec" aria-label="Body"><div class="sec-head"><h3>Body</h3><button type="button" class="btn ghost sm" data-act="body-add">Log a check-in</button></div>' +
+    '<div class="trends">' + bodyTile('Body weight', 'lb', 'bw') + bodyTile('Waist', 'in', 'waist') + '</div>' +
+    (rows ? '<div class="ck-list">' + rows + '</div>' : '') + '</section>' +
+    '<div class="sec-head lifts-head"><h3>Main lifts</h3></div>';
+}
 function historyView() {
   var list = sessions.slice().sort(function (a, b) { return (b.endedAt || 0) - (a.endedAt || 0); });
-  var h = trendsView();
+  var h = bodyView() + trendsView();
   if (!list.length) {
     return h + '<div class="empty"><h3>Nothing logged yet</h3><p>Check off your sets, then tap Finish. Each workout lands here with its weights and reps, and your next session shows what you did last time. Coming from the Claude version? Restore your backup in Settings.</p></div>';
   }
@@ -1043,6 +1137,7 @@ function settingsView() {
   var lastB = st.lastBackup ? 'Last backup ' + fmtDay(ymd(st.lastBackup), true) : 'No backup yet';
   return '<section class="group"><h3>Training</h3>' +
       '<div class="row"><label class="row-t" for="setStart"><b>Program start date</b><small>' + (wk ? 'This is week ' + wk + '. ' : '') + 'Drives the week count and the deload reminder.</small></label><input class="mini" id="setStart" type="date" value="' + esc(st.startDate) + '"></div>' +
+      '<div class="row"><div class="row-t"><b>Comeback ramp</b><small>' + esc(rampStatus()) + '</small></div><button type="button" class="btn ghost sm" data-act="ramp-open">' + (rampWeek() ? 'Change' : 'Set up') + '</button></div>' +
       sw('deload', 'Deload week', 'Half the sets at the same weights. Turn it off when the week is done.') +
     '</section>' +
     '<section class="group"><h3>Rest timer</h3>' +
@@ -1061,6 +1156,7 @@ function settingsView() {
     '<section class="group"><h3>Program rules</h3><div class="notes"><ul>' +
       '<li><b>Double progression.</b> Start at a weight you can lift for the bottom of the rep range. When every set reaches the top of the range, add weight next time (5 lb upper body, 10 lb lower body) and start back at the bottom.</li>' +
       '<li><b>Adherence.</b> Two lifts a week counts as a win. Three is the goal.</li>' +
+      '<li><b>Comeback ramp.</b> After time off, start each lift at 60–80% of its program weight and climb back to 100% over 2–4 weeks before pushing progression.</li>' +
       '<li><b>Weeks 1–2.</b> Stop every set with about 3 reps left.</li>' +
       '<li><b>Week 3 on.</b> Push the last set of each exercise to 1–2 reps from failure.</li>' +
       '<li><b>Every 8 weeks.</b> Deload: same exercises and weights, half the sets.</li>' +
@@ -1121,6 +1217,130 @@ function applyBump(day, id) {
   if (Array.isArray(a)) a.forEach(function (e) { if (isObj(e) && !e.d) e.r = ex.min; });
   commit();
   toast(ex.name + ' is now ' + fmtW(c.to) + ' lb. Start back at ' + ex.min + ' reps.');
+}
+function applyRamp(day, id) {
+  var ex = findEx(day, id), rt = ex && rampTarget(ex);
+  if (!rt) return;
+  S.weights[id] = rt.w;
+  var a = S.days[day].sets[id];
+  if (Array.isArray(a)) a.forEach(function (e) { if (isObj(e) && !e.d) e.r = ex.min; });
+  commit();
+  toast(ex.name + ' is now ' + fmtW(rt.w) + ' lb.');
+}
+function rampStatus() {
+  var w = rampWeek();
+  if (w && !w.done) return 'Week ' + w.k + ' of ' + w.weeks + ', at ' + w.pct + '% of your program weights. Full weights from ' + fmtDay(rampEnds(), true) + '.';
+  if (w) return 'Done. This week every lift goes back to its full program weight.';
+  return 'Coming back after time off? Start lighter and build back to your program weights over a few weeks.';
+}
+function rampPreview(pct) {
+  var out = [];
+  TRENDS.forEach(function (t) {
+    var ex = findExAny(t[0]), w = ex && numOrNull(S.weights[t[0]]);
+    var full = S.settings.ramp && S.settings.ramp.targets[t[0]] ? S.settings.ramp.targets[t[0]] : w;
+    if (ex && full) out.push('<div class="sess-line"><span>' + esc(t[1]) + '</span><span>' + fmtW(full) + ' → ' + fmtW(rampWeightFor(ex, full, pct)) + ' lb</span></div>');
+  });
+  return out.join('');
+}
+function openRamp() {
+  var r = S.settings.ramp, live = !!rampWeek();
+  function opt(v, cur, lab) { return '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + esc(lab) + '</option>'; }
+  var pct = r ? r.pct : 70, weeks = r ? r.weeks : 3;
+  var acts = [{ label: live ? 'Restart the ramp from today' : 'Start the ramp today', kind: 'primary', fn: function () { startRamp(Number($('#rampPct').value), Number($('#rampWeeks').value)); } }];
+  if (r) acts.push({ label: 'End the ramp', kind: 'danger-ghost', fn: endRamp });
+  acts.push({ label: 'Cancel' });
+  openSheet({
+    title: 'Comeback ramp',
+    body: (live ? '<p>' + esc(rampStatus()) + '</p>' : '') +
+      '<p>Each lift with a weight starts at a share of its program weight and climbs in even steps each week until it is back to 100%. Your program weights stay saved as the targets.</p>' +
+      '<div class="field-row"><label class="field"><span>Start at</span><select id="rampPct">' + RAMP_PCTS.map(function (v) { return opt(v, pct, v + '% of program'); }).join('') + '</select></label>' +
+      '<label class="field"><span>Build back over</span><select id="rampWeeks">' + RAMP_WEEKS.map(function (v) { return opt(v, weeks, v + ' weeks'); }).join('') + '</select></label></div>' +
+      '<div class="ramp-prev" id="rampPrev">' + rampPreview(pct) + '</div>' +
+      '<p class="sheet-help">Starting sets this week’s weights now and moves your program start date to today, so the week count and the deload reminder restart. Each new week, the lift shows a button to step up.</p>',
+    actions: acts
+  });
+}
+function startRamp(pct, weeks) {
+  var prev = clone(S), old = S.settings.ramp, targets = {}, today = ymd(Date.now());
+  DAYS.forEach(function (day) {
+    S.program[day].forEach(function (ex) {
+      var w = old && old.targets[ex.id] ? old.targets[ex.id] : numOrNull(S.weights[ex.id]);
+      if (hasLoad(ex) && w != null && w > 0) targets[ex.id] = w;
+    });
+  });
+  S.settings.ramp = normRamp({ start: today, weeks: weeks, pct: pct, targets: targets });
+  S.settings.rampOffered = true;
+  S.settings.startDate = today;
+  S.settings.deload = false;
+  var wk = rampWeek();
+  Object.keys(targets).forEach(function (id) { var ex = findExAny(id); if (ex) S.weights[id] = rampWeightFor(ex, targets[id], wk.pct); });
+  commit();
+  toast('Comeback ramp on. This week is ' + wk.pct + '% of your program weights.', function () { S = prev; commit(); });
+}
+function endRamp() {
+  var prev = clone(S);
+  S.settings.ramp = null;
+  S.settings.rampOffered = true;
+  commit();
+  toast('Comeback ramp ended. Your weights stay where they are.', function () { S = prev; commit(); });
+}
+
+/* Body check-ins */
+function lastCheckinDate() { var d = null; measures.forEach(function (m) { if (!d || m.date > d) d = m.date; }); return d; }
+function checkinDue() {
+  if (!sessions.length && !S.settings.ramp) return false;
+  if (U.ckSnooze === ymd(Date.now())) return false;
+  var d = lastCheckinDate();
+  return !d || daysBetween(fromYmd(d), todayStart()) >= CHECKIN_EVERY;
+}
+function readNum(sel, lo, hi, what) {
+  var raw = String($(sel).value || '').trim();
+  if (!raw) return { v: null };
+  var n = parseWeight(raw);
+  if (n == null || n < lo || n > hi) return { err: what + ' should be between ' + lo + ' and ' + hi + '.' };
+  return { v: n };
+}
+function openCheckin(id) {
+  var m = null;
+  measures.forEach(function (x) { if (x.id === id) m = x; });
+  var date = m ? m.date : ymd(Date.now());
+  openSheet({
+    title: m ? 'Edit check-in' : 'Weekly check-in',
+    body: '<label class="field"><span>Date</span><input id="ckDate" type="date" value="' + esc(date) + '"></label>' +
+      '<div class="field-row"><label class="field"><span>Body weight (lb)</span><input id="ckBw" type="text" inputmode="decimal" autocomplete="off" value="' + (m && numOrNull(m.bw) != null ? fmtW(m.bw) : '') + '" placeholder="182.4"></label>' +
+      '<label class="field"><span>Waist (in)</span><input id="ckWaist" type="text" inputmode="decimal" autocomplete="off" value="' + (m && numOrNull(m.waist) != null ? fmtW(m.waist) : '') + '" placeholder="34.5"></label></div>' +
+      '<p class="sheet-help">Weigh in first thing in the morning, before eating. Measure your waist at the belly button, relaxed. In a recomp the scale can sit still while your waist drops and your lifts go up.</p>' +
+      (m ? '<div class="edit-move"><button type="button" class="btn danger-ghost sm" data-sheet="remove">Delete check-in</button></div>' : ''),
+    actions: [{ label: 'Save check-in', kind: 'primary', fn: function () { return saveCheckin(m ? m.id : null); } }, { label: 'Cancel' }],
+    onClick: function (k, btn) {
+      if (k !== 'remove' || !m) return;
+      if (!btn.dataset.armed) { btn.dataset.armed = '1'; btn.textContent = 'Tap again to delete'; return; }
+      closeSheet();
+      var prev = measures.slice();
+      measures = measures.filter(function (x) { return x.id !== m.id; });
+      commit();
+      toast('Check-in deleted.', function () { measures = prev; commit(); });
+    }
+  });
+}
+function saveCheckin(id) {
+  var date = String($('#ckDate').value || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { toast('Pick a date.'); return true; }
+  var bw = readNum('#ckBw', 50, 700, 'Body weight'), waist = readNum('#ckWaist', 15, 80, 'Waist');
+  if (bw.err || waist.err) { toast(bw.err || waist.err); return true; }
+  if (bw.v == null && waist.v == null) { toast('Enter a body weight, a waist measurement, or both.'); return true; }
+  var prev = measures.map(clone), m = null, same = null;
+  measures.forEach(function (x) { if (x.id === id) m = x; else if (x.date === date) same = x; });
+  if (same) {
+    measures = measures.filter(function (x) { return x.id !== id; });
+    if (bw.v == null) bw.v = numOrNull(same.bw);
+    if (waist.v == null) waist.v = numOrNull(same.waist);
+    m = same;
+  }
+  if (!m) { m = { id: 'm' + Date.now().toString(36) + rand() }; measures.push(m); }
+  m.date = date; m.bw = bw.v; m.waist = waist.v; m.updatedAt = Date.now();
+  commit();
+  toast('Check-in saved.', function () { measures = prev; commit(); });
 }
 function toggleWarm(day, k) {
   var ds = S.days[day];
@@ -1336,6 +1556,7 @@ function openErase() {
     body: '<p>Deletes your log, weights, edits and settings from this phone. Back up first if you might want any of it later. This cannot be undone.</p>',
     actions: [{ label: 'Erase everything', kind: 'danger', fn: function () {
       sessions = [];
+      measures = [];
       S = defaultState();
       U.cardioT = { running: false, startMs: 0, accMs: 0 }; U.rest = null; U.warmOpen = {}; U.view = 'workout'; U.tab = 'A';
       commit(); window.scrollTo(0, 0); toast('Everything erased.');
@@ -1385,7 +1606,7 @@ function openCopySheet(filename, data) {
   });
 }
 function backup() {
-  var data = JSON.stringify({ app: 'recomp-log', v: 1, exportedAt: new Date().toISOString(), state: S, sessions: sessions }, null, 1);
+  var data = JSON.stringify({ app: 'recomp-log', v: 1, exportedAt: new Date().toISOString(), state: S, sessions: sessions, measures: measures }, null, 1);
   saveFile('recomp-log-backup-' + ymd(Date.now()) + '.json', data, 'application/json', function () {
     S.settings.lastBackup = Date.now();
     commit();
@@ -1395,7 +1616,15 @@ function backup() {
 function csvCell(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
 function exportCsv() {
   var rows = [['date', 'workout', 'exercise', 'set', 'weight_lb', 'reps_or_seconds', 'done', 'note']];
-  sessions.slice().sort(function (a, b) { return (a.endedAt || 0) - (b.endedAt || 0); }).forEach(function (s) {
+  var items = sessions.map(function (s) { return { k: s.date, t: s.endedAt || 0, s: s }; }).concat(measures.map(function (m) { return { k: m.date, t: -1, m: m }; }));
+  items.sort(function (a, b) { return a.k < b.k ? -1 : (a.k > b.k ? 1 : a.t - b.t); });
+  items.forEach(function (it) {
+    var s = it.s, m = it.m;
+    if (m) {
+      if (numOrNull(m.bw) != null) rows.push([m.date, 'Check-in', 'Body weight', '', m.bw, '', '', '']);
+      if (numOrNull(m.waist) != null) rows.push([m.date, 'Check-in', 'Waist', '', '', m.waist + ' in', '', '']);
+      return;
+    }
     if (s.type === 'cardio') { rows.push([s.date, 'Cardio', '12-3-30 incline walk', '', '', (s.minutes || 0) + ' min', (Array.isArray(s.blocks) ? s.blocks.filter(Boolean).length : 0) + '/3 blocks', s.note || '']); return; }
     (Array.isArray(s.ex) ? s.ex : []).forEach(function (e, ei) {
       (Array.isArray(e.sets) ? e.sets : []).forEach(function (x, i) {
@@ -1414,10 +1643,11 @@ function readBackup(file) {
     try { obj = JSON.parse(String(r.result)); } catch (e) { obj = null; }
     if (!isObj(obj) || obj.app !== 'recomp-log' || !isObj(obj.state)) { toast('That file is not a Recomp backup.'); return; }
     var n = Array.isArray(obj.sessions) ? obj.sessions.filter(validSession).length : 0;
+    var nm = Array.isArray(obj.measures) ? obj.measures.filter(validMeasure).length : 0;
     var when = obj.exportedAt ? new Date(obj.exportedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'an unknown date';
     openSheet({
       title: 'Restore backup',
-      body: '<p>Backup from ' + esc(when) + ' with ' + n + ' logged workout' + (n === 1 ? '' : 's') + '.</p><p class="sheet-help">Your program, weights and settings switch to the backup. Its workouts are added to your log, and nothing already logged is removed.</p>',
+      body: '<p>Backup from ' + esc(when) + ' with ' + n + ' logged workout' + (n === 1 ? '' : 's') + (nm ? ' and ' + nm + ' check-in' + (nm === 1 ? '' : 's') : '') + '.</p><p class="sheet-help">Your program, weights and settings switch to the backup. Its workouts and check-ins are added to your log, and nothing already logged is removed.</p>',
       actions: [{ label: 'Restore', kind: 'primary', fn: function () { applyBackup(obj); } }, { label: 'Cancel' }]
     });
   };
@@ -1432,6 +1662,11 @@ function applyBackup(obj) {
   incoming.forEach(function (s) {
     if (!map[s.id] || (Number(s.updatedAt) || 0) >= (Number(map[s.id].updatedAt) || 0)) map[s.id] = s;
   });
+  var mmap = {};
+  measures.forEach(function (m) { mmap[m.id] = m; });
+  (Array.isArray(obj.measures) ? obj.measures : []).filter(validMeasure).map(clone).forEach(function (m) {
+    if (!mmap[m.id] || (Number(m.updatedAt) || 0) >= (Number(mmap[m.id].updatedAt) || 0)) mmap[m.id] = m;
+  });
   var defs = defaultState().weights;
   Object.keys(defs).forEach(function (k) { if (st.weights[k] == null && defs[k] != null) st.weights[k] = defs[k]; });
   var exported = Date.parse(obj.exportedAt);
@@ -1439,6 +1674,7 @@ function applyBackup(obj) {
   st.settings.introSeen = true;
   S = st;
   sessions = Object.keys(map).map(function (k) { return map[k]; });
+  measures = Object.keys(mmap).map(function (k) { return mmap[k]; });
   U.tab = initialTab();
   commit();
   toast('Backup restored.');
@@ -1608,6 +1844,12 @@ document.addEventListener('click', function (e) {
     case 'wt-dec': adjWeight(day, id, -1); break;
     case 'wt-inc': adjWeight(day, id, 1); break;
     case 'apply-bump': applyBump(day, id); break;
+    case 'apply-ramp': applyRamp(day, id); break;
+    case 'ramp-open': openRamp(); break;
+    case 'ramp-dismiss': S.settings.rampOffered = true; commit(); break;
+    case 'body-add': openCheckin(null); break;
+    case 'body-edit': openCheckin(el.dataset.id); break;
+    case 'ck-later': U.ckSnooze = ymd(Date.now()); saveLocal(); renderMain(); break;
     case 'warm-toggle': toggleWarm(day, el.dataset.k); break;
     case 'warm-collapse': U.warmOpen[day] = el.getAttribute('aria-expanded') !== 'true'; saveLocal(); renderMain(); break;
     case 'ex-edit': openEdit(day, id, false); break;
@@ -1643,6 +1885,7 @@ document.addEventListener('change', function (e) {
   if (t.classList && t.classList.contains('wt-input')) { onWeightInput(t); return; }
   if (t.id === 'setStart') { S.settings.startDate = /^\d{4}-\d{2}-\d{2}$/.test(t.value) ? t.value : ''; commit(); return; }
   if (t.id === 'setBar') { var v = Number(t.value); S.settings.bar = v > 0 && v <= 100 ? v : 45; commit(); return; }
+  if (t.id === 'rampPct') { var pv = document.getElementById('rampPrev'); if (pv) pv.innerHTML = rampPreview(Number(t.value)); return; }
   if (t.id === 'restoreInput') { var file = t.files && t.files[0]; t.value = ''; readBackup(file); }
 });
 document.addEventListener('focusin', function (e) {
@@ -1666,7 +1909,7 @@ U.tab = initialTab();
 render();
 setTimeout(updateDockSpace, 300);
 requestPersist();
-if ('serviceWorker' in navigator && location.protocol === 'https:') {
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
   window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
 }
 })();
